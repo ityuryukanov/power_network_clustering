@@ -50,6 +50,9 @@ def strsci2strfix(contents):
     sci_num = re.compile('-?\ *[0-9]+\.?[0-9]*(?:[Ee]\ *-?\ *[0-9]+)?')
     for idx,_ in enumerate(contents):
         line = contents[idx]
+        hexnum = line.find('#')>=0 or line.find('"')>=0
+        if hexnum:        
+            continue
         strsci = [x for x in re.findall(sci_num,line)]        
         for scistr in strsci:
             scistr = scistr.replace(' ','')

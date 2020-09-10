@@ -4,7 +4,7 @@
 % Reference: I. Tyuryukanov, M. Popov, M. A. M. M. van der Meijden, and V. 
 % Terzija. "Slow Coherency Identification and Power System Dynamic Model 
 % Reduction by using Orthogonal Structure of Electromechanical Eigenvectors". 
-% In: IEEE Trans. Power Syst. 33.6 (2020), pp. ????–????.
+% In: IEEE Trans. Power Syst. 33.6 (2020), pp. ???????????.
 % 
 
 %% Adjust path
@@ -122,7 +122,7 @@ eigIZN7 = zeros(1,kmax-1); ncutZN7 = zeros(1,kmax-1);  % New alignment + random 
 %eigIZN8 = zeros(1,kmax-1); ncutZN8 = zeros(1,kmax-1); % Exact ncut
 %% Start the loop
 mo000 = 1:m;
-for k = nc:1:kmax
+for k = 2:1:kmax
   %% Run various slow coherency identification methods
   % Classic slow coherency algorithm
   Vs = V(:,1:k);
@@ -344,7 +344,7 @@ ax = gca; ax.GridColor = [0, 0, 0]; set(ax, 'xgrid', 'on'); set(gca, 'xminorgrid
 set(gcf, 'pos', [100 100 x_width y_width]);
 close;
 %}
-figure;
+hf = figure;
 h1 = plot(eigIVN0, 'o-.', 'Color', rgb('Green'), 'MarkerSize', 4, 'LineWidth', 1.2); hold on;
 h3 = plot(eigIZN3, '.-', 'Color', 'r', 'MarkerSize', 12, 'LineWidth', 1.2);
 h2 = plot(eigIZN7, '.-', 'Color', 'k', 'MarkerSize', 12, 'LineWidth', 1.2);

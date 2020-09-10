@@ -158,7 +158,8 @@ v_inc = ones(1, 2*n);
 inc = sparse(i_inc, j_inc, v_inc, m, n);
 
 % Convert coherent groups information from PST-output format to more compact
-% two-row representation
+% two-row representation (OBSOLETE! Now pst.coh should be in this format)
+%{
 cohmap = zeros(1, m);
 for i = 1:size(coh, 2)
   [~, ~, ib] = intersect(coh(:,i), bus(:,1));
@@ -169,6 +170,7 @@ n_gen = nnz(coh);
 coh = zeros(2, n_gen);
 coh(1,:) = j;  % and this is version 2
 coh(2,:) = v;
+%}
 
 % Set default coherency (all to one group) in case coh was not provided
 if isempty(coh)

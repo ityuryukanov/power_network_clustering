@@ -1,6 +1,6 @@
 function g = pst2graph( pst, varargin )
 % Syntax: 
-% g = pst2graph(pst, varargin)
+% g = pst2graph( pst, varargin )
 % 
 % Purpose:
 % create load flow graph (represented by adjacency and incidence matrices)
@@ -158,7 +158,7 @@ v_inc = ones(1, 2*n);
 inc = sparse(i_inc, j_inc, v_inc, m, n);
 
 % Convert coherent groups information from PST-output format to more compact
-% two-row representation (OBSOLETE! Now pst.coh should be in this format)
+% two-row representation (Now pst.coh should INITIALLY be in this format)
 %{
 cohmap = zeros(1, m);
 for i = 1:size(coh, 2)
@@ -176,6 +176,10 @@ coh(2,:) = v;
 if isempty(coh)
   coh = sort(find(genmap));
   coh(2,:) = 1*ones(1, nnz(genmap));
+else
+  % convert bus ids into consequitive node numbers
+  assert(issorted(coh(1,:))); % bus ids are supposed to be sorted
+  coh(1,:) = find( ismember(bus(:,1),coh(1,:)) );  
 end
 
 % Extract generator and load P and Q at the buses

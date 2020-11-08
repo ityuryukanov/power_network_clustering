@@ -129,8 +129,8 @@ __pycache__
 *.lp
 *.ilp
 
-# Compiled MEX binaries (all platforms)
-*.mex*
+# Compiled MEX binaries (disabled based on user requests)
+# *.mex*
 
 # Simulink Code Generation
 slprj/

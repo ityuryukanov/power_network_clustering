@@ -48,7 +48,14 @@ coh = reshape(tmp, size(coh));
 % Delete the possible groups with no generators
 empty_groups = all(coh==0,1);
 coh(:, empty_groups) = [];
-pst.coh = coh;
+
+% Fill in pst.coh according to the standard format
+n_grp = size(coh,2);
+pst.coh(1,:) = sort(nonzeros(coh),'ascend');
+for j = 1:1:n_grp
+  i_grp = ismember(pst.coh(1,:),nonzeros(coh(:,j)));
+  pst.coh(2,i_grp) = j;
+end
 
 % Create the contraints matrix for Flexible Constrained Spectral Clustering
 bus = pst.bus(:,1:10);

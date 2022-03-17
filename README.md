@@ -1,9 +1,7 @@
 # Power System Spectral Clustering and Partitioning
 
 ## Overview 
-This repository contains the companion MATLAB code for the PhD dissertation [1]:
-
-Ilya Tyuryukanov, "Graph Partitioning Algorithms for Control of AC Transmission Networks: Generator Slow Coherency, Intentional Controlled Islanding, and Secondary Voltage Control", PhD Thesis, Delft University of Technology, 2020.
+This repository contains the companion MATLAB code for the PhD dissertation [1] and some related later publications.
 
 The repository is organized as an object-oriented MATLAB toolbox, in which MATLAB classes unite groups of methods related to different topics or use cases.
 

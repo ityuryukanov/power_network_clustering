@@ -12,7 +12,11 @@ PST.pst_var;
 bus = pst.bus(:,1:10);   %remove extra-added data to avoid bugs
 line = pst.lin(:,1:min(size(pst.lin,2),10));   %remove extra-added data to avoid bugs
 mac_con = pst.gen;
-assert(norm(mac_con(:,[4:6,8:15,18,20:21]),'fro')<1e-6,'Classical generator models are required');  
+if size(mac_con,2)<20
+  assert(norm(mac_con(:,[4:6,8:15,18]),'fro')<1e-6,'Classical generator models are required');  
+else
+  assert(norm(mac_con(:,[4:6,8:15,18,20:21]),'fro')<1e-6,'Classical generator models are required');    
+end
 basmva = pst.basmva;
 basrad = 2*pi*pst.f0; 
 %syn_ref = 1;   %machine 1 (arbitrary) is reference

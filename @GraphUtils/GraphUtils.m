@@ -30,8 +30,9 @@ classdef GraphUtils
     [Z_out, J_out, t_run] = rotVslow(V, mode, dm, batch_siz, k_min) 
     pfgraph2hmetis(adj, inc, vw, coh) 
     [T] = min_cut_rb(adj, vs, vw, debug) 
-    ixs = aggregate_mls( bran_ml, coh_ml ) 
-    [T, i_best, contig] = best_part(cntg, all_bus, weXp, outl_gen, dif) 
+    ixs = aggregate_mls( bran_ml, coh_ml )
+    [T, i_best, contig] = best_part(cntg, all_bus, weXp, outl_gen, dif)
+	mcb = mcb_generator(caseid, GRBDIR)
   end
   
 end

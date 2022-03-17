@@ -80,4 +80,5 @@ global lin2_con lin2_pot lin2c_ou
 global lin2_1a lin2_2a lin2_1b lin2_2b lin2_1c lin2_2c
 global dlin2_1a dlin2_2a dlin2_1b dlin2_2b dlin2_1c dlin2_2c
 
-
+% DC variables?
+global dcr_dc dci_dc svc_dc tcsc_dc;

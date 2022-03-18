@@ -1,9 +1,7 @@
-# Power System Spectral Clustering 
+# Power System Spectral Clustering and Partitioning
 
 ## Overview 
-This repository contains the companion MATLAB code for the PhD dissertation [1]:
-
-Ilya Tyuryukanov, "Graph Partitioning Algorithms for Control of AC Transmission Networks: Generator Slow Coherency, Intentional Controlled Islanding, and Secondary Voltage Control", PhD Thesis, Delft University of Technology, 2020.
+This repository contains the companion MATLAB code for the PhD dissertation [1] and some related later publications.
 
 The repository is organized as an object-oriented MATLAB toolbox, in which MATLAB classes unite groups of methods related to different topics or use cases.
 
@@ -13,7 +11,7 @@ The repository is organized as an object-oriented MATLAB toolbox, in which MATLA
 
 **@GraphUtils**  - The static class combining various methods primarily aimed at working with graph matrices (e.g., adjancency or incidence matrices), but also with graphs represented in other formats.
 
-**@PFgraph**     - A custom MATLAB class to represent power system graphs. Its methods partially intersect with those of @GraphUtils, but require a PFgraph object as input.
+**@PFgraph**     - A custom MATLAB class to represent power system graphs and perform computations on them. Its methods partially intersect with those of @GraphUtils, but require a PFgraph object as input.
 
 **@Utils** 	     - An auxiliary static MATLAB class containing some auxiliary methods not directly related to the main subject. 
 

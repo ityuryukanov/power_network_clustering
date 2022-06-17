@@ -1,7 +1,5 @@
 from gurobipy import GRB, quicksum, tupledict
 from cycflw import Cycflw
-from utils import cycle_ordering, cycle_signing, sol2stage
-from top_callbk import dfjcut_callback
 import csv
 import os
 
@@ -16,7 +14,7 @@ def root_arcs(islsw,nodes):
     darcs = uarcs + [(root,sr) for root in roots]
     return sr, uarcs, darcs
 
-class CycflwCohen(Cycflw): #()
+class CycflwCohen(Cycflw):
     """
     Class to solve the Cycflw base class model by adding graph connectivity  
     as formulated by Natann Cohen. The optimization objective is in cycflw.py.
@@ -24,11 +22,10 @@ class CycflwCohen(Cycflw): #()
     If no cycle subdivision is desired, simply modify the class to inherit from 
     Cycflw (change three class calls and one import).
     """ 
-    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False, MIPHEUR = None):
+    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False):
         
         mipstart = MIPSTART
-        mip_heur = MIPHEUR
-        Cycflw.__init__(self, args, RESLIM, OPTCR, MIPSTART=mipstart, MIPHEUR = mip_heur)
+        Cycflw.__init__(self, args, RESLIM, OPTCR, MIPSTART=mipstart)
         
         # Create the graph partitioning model (initial solve)
         modOPF = self.model
@@ -41,7 +38,6 @@ class CycflwCohen(Cycflw): #()
         rcprcl = 1/(len(self.nodes)+1);  # all nodes plus the "superroot" sr
         modOPF._f = modOPF.addVars( f_arcs, name="f", vtype=GRB.CONTINUOUS, lb=0, ub=(1-rcprcl))
         modOPF.addConstr(quicksum(modOPF._f[i,j] for i,j in f_arcs )==len(self.nodes), "sptreeF1")     
-        #modOPF.addConstr( quicksum(modOPF._f[i,j]+modOPF._f[j,i] for i,j in self.uarcs)==len(self.nodes)-len(islsw), "sptreeF2")        
         EgFLW = tupledict()        
         for i,j in fuarcs:
             EgFLW[i,j] = modOPF.addConstr(modOPF._f[i,j] + modOPF._f[j,i] == 1, "EgFLOW[%s,%s]" % (i,j))
@@ -52,26 +48,18 @@ class CycflwCohen(Cycflw): #()
             modOPF.addConstr(modOPF._f[i,j] >= rcprcl*(modOPF._z[i,j] + modOPF._z[j,i]), "FLOWlo1[%s,%s]" % (i,j))            
             modOPF.addConstr(modOPF._f[j,i] >= rcprcl*(modOPF._z[i,j] + modOPF._z[j,i]), "FLOWlo1[%s,%s]" % (j,i))                       
             modOPF.addConstr(modOPF._f[i,j] <= (1-rcprcl)*(modOPF._z[i,j] + modOPF._z[j,i]), "FLOWHi1[%s,%s]" % (i,j)) 
-            modOPF.addConstr(modOPF._f[j,i] <= (1-rcprcl)*(modOPF._z[i,j] + modOPF._z[j,i]), "FLOWHi1[%s,%s]" % (j,i))           
-            #modOPF.addConstr(modOPF._f[i,j] >= rcprcl*(1-modOPF._y[i,j]), "FLOWlo2[%s,%s]" % (i,j))      #infeas
-            #modOPF.addConstr(modOPF._f[j,i] >= rcprcl*(1-modOPF._y[i,j]), "FLOWlo2[%s,%s]" % (j,i))      #infeas           
-            #modOPF.addConstr(modOPF._f[i,j] <= (1-rcprcl)*(1-modOPF._y[i,j]), "FLOWHi2[%s,%s]" % (i,j))  #infeas
-            #modOPF.addConstr(modOPF._f[j,i] <= (1-rcprcl)*(1-modOPF._y[i,j]), "FLOWHi2[%s,%s]" % (j,i))  #infeas
-            #EgFLW[i,j].Lazy = 1
+            modOPF.addConstr(modOPF._f[j,i] <= (1-rcprcl)*(modOPF._z[i,j] + modOPF._z[j,i]), "FLOWHi1[%s,%s]" % (j,i)) 
         VxFLW = tupledict() 
         Nv = islsw  # neighbors of sr
-        VxFLW[sr] = modOPF.addConstr(quicksum(modOPF._f[j,sr] for j in Nv) == 1-rcprcl, "VxFLOW[%s]" % (sr))
-        #VxFLW[sr].Lazy = 1                
+        VxFLW[sr] = modOPF.addConstr(quicksum(modOPF._f[j,sr] for j in Nv) == 1-rcprcl, "VxFLOW[%s]" % (sr))               
         nonroot = set(self.nodes) - set(islsw)
         for v in islsw:
             Nv = set(modOPF._graph.neighbors(v))
             Nv.add(sr)
             VxFLW[v] = modOPF.addConstr(quicksum(modOPF._f[j,v] for j in Nv) == 1-rcprcl, "VxFLOW[%s]" % (v))
-            #VxFLW[v].Lazy = 1
         for v in nonroot:
             Nv = set(modOPF._graph.neighbors(v))
-            VxFLW[v] = modOPF.addConstr(quicksum(modOPF._f[j,v] for j in Nv) == 1-rcprcl, "VxFLOW[%s]" % (v))
-            #VxFLW[v].Lazy = 1        
+            VxFLW[v] = modOPF.addConstr(quicksum(modOPF._f[j,v] for j in Nv) == 1-rcprcl, "VxFLOW[%s]" % (v))       
         
         # The objective is in cycflw.py. This function only modifies the power 
         # flow constraints. 
@@ -80,7 +68,6 @@ class CycflwCohen(Cycflw): #()
 
         
     def solve(self, callbackfcn=None):
-        self = sol2stage(self,dfjcut_callback)
         self = Cycflw.solve(self, None) 
         y = list()     #branch status
         self.totCUT = 0

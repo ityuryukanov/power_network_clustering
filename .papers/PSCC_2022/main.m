@@ -1,15 +1,15 @@
-%
+%   
 % A very basic wrapper around test_mip(). Many study parameters are still
 % changed inside of test_mip() and the optimization routines that it calls
 % (e.g., in start_KVL.py and start_PHI.py).
 % This one is only needed to run multiple cases/group numbers at once.
-%
+%   
 clc;
 PHI_OR_KVL = {'PHI','ZIJ','KVL'};
-cases = {'case89pegase', 'datanp48', 'case1354pegase'};
+cases = {'case89pegase', 'case300', 'case1354pegase', 'case1888rte', 'case2868rte'};  %, 'datanp48'
 k_small = 5;
-k_large = 7;
-for p = 1:1:numel(PHI_OR_KVL)
+k_large = 8;
+for p = 1:1:numel(PHI_OR_KVL) 
   PXX = PHI_OR_KVL{p};
   eval(['res_',PXX,'=containers.Map();'])
   for i = 1:1:numel(cases)
@@ -31,17 +31,17 @@ for p = 1:1:numel(PHI_OR_KVL)
     else
       K = k_large;
     end
-    res_caseid = NaN(K-1,7);
+    res_caseid = NaN(K-1,9);
     for k = 2:1:K
       try
         res = test_mip(PXX, k, caseid);
-        res_caseid(k-1,:) = [k,res.UB,res.runTme,res.GAP,res.totPLS,res.islIMB,res.totPGS];
+        res_caseid(k-1,:) = [k,res.UB,res.runTme,res.GAP*100,res.totPLS,res.islIMB,res.totPGS,res.totCUT,res.t_feas];
       catch
-        res_caseid(k-1,:) = [k,NaN,NaN,NaN,NaN,NaN,NaN];
+        res_caseid(k-1,:) = [k,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN];
       end      
     end
     eval(['res_',PXX,'(caseid) = res_caseid;']);
   end
 end
 
-foo = 5;
+foo=5;

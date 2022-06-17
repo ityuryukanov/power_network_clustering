@@ -2,6 +2,10 @@
 Same as start_PHI.py, only CONNTYP='tree' instead of CONNTYP='flow'.
 This copying is done for a simple and convenient batch execution of 
 the study cases from start.m in the .papers/PSCC_2022 folder. 
+
+The corresponding file that calls the optimize() method for the model
+is bnc_dcopf.py. There the MIPFOCUS parameter for the solution strategy 
+is set. 
 """
 
 import os 
@@ -10,27 +14,24 @@ sys.path.append(os.path.dirname(os.path.dirname( __file__ )))
 from grb_read_graph import read_file, unidirect 
 from gurobipy  import setParam
 from pnm_cflow import Pnm_Cflow
+from make_mheur import Make_Mheur
 
 # Input parameters for optimization
-TimeLimit = 20
-MIPGap = 0.01
+MIPGap = 1e-2
 START = False
 HEUR = dict()
 HEUR['enabled'] = True
-HEUR['Theur'] = 15 
-HEUR['T_lim'] = 5.8
 ici_pth = os.path.abspath(os.path.join(os.path.dirname( __file__ ), 'ici'))
-       
+
 # Initial solution (mostly to debug Gurobi by fixing feasible x(i,k))
 x_ini, _ = read_file(os.path.join(ici_pth, 'x_ini.csv'))
-#z_ini, _ = read_file(os.path.join(ici_pth, 'z_ini0.00 %.csv'))
+#z_ini, _ = read_file(os.path.join(ici_pth, 'z_ini.csv'))
 y_ini, _ = read_file(os.path.join(ici_pth, 'y_ini.csv'))
 
 # Graph parameters
 bdcpf, nodes = read_file(os.path.join(ici_pth, 'graph.csv'))
 flow0, _ = read_file(os.path.join(ici_pth, 'flow0.csv'))
 brlim, _ = read_file(os.path.join(ici_pth, 'brlim.csv'))
-dstTR, _ = read_file(os.path.join(ici_pth, 'dstTR.csv'))
 
 # Sets
 buses = read_file(os.path.join(ici_pth, 'nodes.csv'))
@@ -75,13 +76,12 @@ args = {'nodes':nodes,
         'flow0':flow0,
         'brlim':brlim,
         'x_ini':x_ini,
-        'y_ini':y_ini,        
-        'z_ini':None,        
+        'y_ini':y_ini,
+        'z_ini':None,
         'pL0'  :pL0,
         'pG0'  :pG0,
         'costL':costL,
         'trm2k':trm2k,
-        'dstTR':dstTR,
         'pLmax':pLmax,
         'pLmin':pLmin,
         'pGmax':pGmax,
@@ -89,15 +89,26 @@ args = {'nodes':nodes,
         'icase':caseid,
         'mu'   :mu,
         'nu'   :nu}
+if len(buses)<500:
+    TimeLimit = 480
+else:
+    TimeLimit = 720
+HEUR['Theur'] = TimeLimit*0.06
+HEUR['T_lim'] = TimeLimit*0.02   
 if method=='pnm_cflow':
-    m = Pnm_Cflow(args, RESLIM=TimeLimit, OPTCR=MIPGap, MIPSTART=START, MIPHEUR=HEUR, CONNTYP='tree')   #'tree' 'flow'
+    m = Pnm_Cflow(args, RESLIM=TimeLimit, OPTCR=MIPGap, MIPSTART=START, CONNTYP='tree')   #'tree' 'flow'
+    m.model.Params.PreCrush = 1
+    # Create the auxiliary MIP heuristics model here to avoid recursive module imports in pnm_cflow.py
+    if HEUR['enabled']:
+        m.model = Make_Mheur(m.model, args, HEUR)
+    else:
+        m.model._MipHeur=HEUR  
+    ##m.model.Params.CutPasses = 10000000
+    #m.model.Params.ImproveStartTime = 0.02*TimeLimit
+    m.model.Params.LazyConstraints = 1          
     m.solve()
 else:
     raise RuntimeError('The value of method argument can be either "bnc_arbor" or "bnc_nodes"')
-
-
-
-
 
 
 

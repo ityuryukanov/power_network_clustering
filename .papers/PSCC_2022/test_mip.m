@@ -1,9 +1,9 @@
 function res = test_mip(PHI_OR_KVL, nc, caseid)
 clc;
 solver = 'gurobi';
-caseid0 = 'case2869pegase';
+caseid0 = 'case1354pegase';   %case89pegase  case1354pegase case1888rte case2868rte
 nc0 = 7;
-if nargin<1, nc=nc0; PHI_OR_KVL='KVL'; caseid=caseid0; end
+if nargin<1, nc=nc0; PHI_OR_KVL='ZIJ'; caseid=caseid0; end
 if nargin<2, nc=nc0; caseid=caseid0; end
 if nargin<3, caseid=caseid0; end
 
@@ -15,10 +15,10 @@ old_matlabpath = path;
 cleanup1 = onCleanup(@() path(old_matlabpath));
 addpath( fullfile(fileparts(fileparts(fileparts(mfilename('fullpath'))))),...
   fullfile(fileparts(fileparts(fileparts(mfilename('fullpath')))), 'third_party'),...
-  fullfile(fileparts(fileparts(fileparts(mfilename('fullpath')))), 'third_party', 'matlab_bgl') ); 
+  fullfile(fileparts(fileparts(fileparts(mfilename('fullpath')))), 'third_party', 'matlab_bgl') );
 warning off;
 % Initialise the studycase from MATPOWER
-if strcmp(caseid,'datanp48')
+if strcmp(caseid,'datanp48')||strcmp(caseid,'data50m')
   eval(caseid);
   % Prepare the data of PST to be consistent with PFgraph
   [bus(:,1),I] = sort(bus(:,1),'ascend');  % sort with respect to busIDs to ensure that...
@@ -39,7 +39,7 @@ if strcmp(caseid,'datanp48')
   [~,ord] = sort(mac_con(:,2),'ascend');  %a new meaninful machine order
   mac_con = mac_con(ord,:);
   mac_con(:,1) = (1:1:size(mac_con,1))';
-  tol = 2e-13; iter_max = 30; vmin = 0.5;  vmax = 1.5; acc = 1.0;
+  tol = 2e-13; iter_max = 30; vmin = 0.5; vmax = 1.5; acc = 1.0;
   [DUMMY, bus, line_flw] = evalc('PST.LLoadflow(bus,lin,tol,iter_max,vmin,vmax,acc,''n'',2);');
   flo_fr = 1:2:size(line_flw,1)-1;
   flo_to = 2:2:size(line_flw,1);
@@ -58,6 +58,34 @@ if size(pst.gen,2)<20
 else
   pst.gen(:,[4:6,8:15,18,20:21]) = 0;  
 end
+
+% Initialise the studycase from PST
+%{
+pst = load('datanp48.mat','bus','line','mac_con');   %line() is reserved by MATLAB!  %datanp48.mat, data16m
+lin = pst.line; bus = pst.bus; mac_con = pst.mac_con;
+%Prepare the data of PST to be consistent with PFgraph
+[bus(:,1),I] = sort(bus(:,1),'ascend');  %sort with respect to busIDs to ensure that... 
+ bus(:,2:end) = bus(I,2:end);  
+[mac_con(:,2),I] = sort(mac_con(:,2),'ascend');  %busIDs in bus[] and gen[] are in the same order
+ncol_g = size(mac_con,2);
+mac_con(:,[1,3:ncol_g]) = mac_con(I,[1,3:ncol_g]);
+pst = struct_pst(bus, lin, mac_con, 100, [], 60); 
+pst = pstLumPgen(pst);  %lump same bus generators before converting to PFgraph
+gen = pst.gen;
+mpw = pst2mp(bus, lin, gen, pst.basmva, pst.f0, 'ac', true);
+pst = mp2pst(mpw,'acdc','ac');
+pst.gen = gen;
+%}
+
+% Merge shunts into loads (a quick fix valid for DCOPF ICI)
+%{
+mpw.bus(:,3) = mpw.bus(:,3) + mpw.bus(:,5);
+mpw.bus(:,4) = mpw.bus(:,4) - mpw.bus(:,6); %MVar INJECTED
+pst.bus(:,6) = pst.bus(:,6) + pst.bus(:,8);
+pst.bus(:,7) = pst.bus(:,7) - pst.bus(:,9); %MVar INJECTED
+mpw.bus(:,5:6) = 0;
+pst.bus(:,8:9) = 0;
+%}
 
 % Convert to graph
 g = pst2graph(pst,'mode','dcpf');
@@ -84,7 +112,7 @@ Gfsm = PFgraph('adj', abs(Kfsm), 'vw', full(diag(M)));
 
 % Get coherency groups and set them in the graph
 spcopt.card_min = 1; spcopt.improv = false;  
-spcopt.thrs = sqrt(2)/2+0.0001;  % the "normal" value
+spcopt.thrs = sqrt(2)/2+0.0001;  % the normal value, could be decreased to obtain the results
 V_z = Y{nc-1};
 cores = spec_cores3(V_z, Gfsm.vw(:), Gfsm.adj, spcopt);
 T1 = greedy_ncut(Gfsm.adj, Gfsm.vw, cores, setdiff(m000,vertcat(cores{:})),true);
@@ -92,7 +120,6 @@ T1 = greedy_ncut(Gfsm.adj, Gfsm.vw, cores, setdiff(m000,vertcat(cores{:})),true)
 [~, ia, ~] = intersect(g.bus, mac_con(:,2)');  % re-express into graph internal indexing
 g.coh(1,:) = ia(:)';
 g.coh(2,:) = T2';
-%}
 
 % Set negative loads as generators and negative generators as loads to
 % ensure positive load and generator shedding to ensure that the lowest  
@@ -105,6 +132,26 @@ cL = ones(1,m);
 cL(pow_lod>0) = 1;  % only penalize LS on the original loads
 gen2lod = pow_gen<0;
 lod2gen = pow_lod<0;
+% First handle those both in gen2lod and lod2gen-----------------
+lod0gen = find(gen2lod & lod2gen);
+for i = 1:1:numel(lod0gen)
+  busidx = lod0gen(i);
+  powr = pow_gen(busidx) - pow_lod(busidx);
+  if powr>0
+    pow_lod(busidx) = 0;
+    pow_gen(busidx) = abs(powr);    
+  elseif powr<0
+    g.gen(busidx) = false;  % from here, g.gen and g.coh don't share same buses!
+    pow_lod(busidx) = abs(powr);
+    pow_gen(busidx) = 0;    
+  else
+    pow_lod(busidx) = 0;
+    pow_gen(busidx) = 0;    
+  end
+  gen2lod(busidx) = false;
+  lod2gen(busidx) = false;
+end
+%-----------------------------------------------------------------
 pow_lod(gen2lod) = pow_lod(gen2lod)-pow_gen(gen2lod);
 pow_gen(gen2lod) = 0;
 g.gen(gen2lod) = false;   % from here, g.gen and g.coh don't share same buses!
@@ -122,7 +169,7 @@ assert(all(pow_gen>=vw(:,1)) && all(pow_gen<=vw(:,2)));
 g.vw = vw; 
 
 % Create the power flow graph
-g_mw = pst2graph(pst, 'mode', 'apfg');
+g_mw = pst2graph(pst, 'mode', 'apfg'); 
 g_mw.coh = g.coh;
 adj_mw = g_mw.adj;
 [i_mw,j_mw,w_mw] = find(tril(adj_mw));
@@ -138,7 +185,7 @@ g_mw.coh = g.coh;
 g_mw = reduce_pml(g_mw);
 g_dst = PFgraph('adj', double(logical(g_mw.adj)), 'inc', g_mw.inc, 'gen',...
   g_mw.gen, 'scal', g_mw.scal, 'bus', g_mw.bus, 'coh', g_mw.coh, 'ml',...
-  g_mw.ml);  %, 'vw', g.vw    
+  g_mw.ml);   %, 'vw', g.vw    
 trees = hclust_constrained_path(g_dst);
 T = g_mw.coGrReduClust(trees, 'refine', true);
 T = T(g_mw.merge_map);  
@@ -160,9 +207,9 @@ for p = 1:1:size(p_mw,1)
   y_ini(p,3) = sum( x_ini(i,:).*x_ini(j,:) );
 end
 
-model = 'NFan.gms';  %-dicut
+model = 'flow.gms';  %-dicut
 [T, sol_stat, res] = coMILPdcOPF(g, 'model', model, 'p_mw', p_mw, 'p_mx', p_mx,...
-  'mu', 0.01, 'nu', 1.0, 'x_ini', x_ini, 'y_ini', y_ini, 'd_ini', d_ini,...  %0.033
+  'mu', 0.10, 'nu', 1.0, 'x_ini', x_ini, 'y_ini', y_ini, 'd_ini', d_ini,...  %0.033
   'mpw', mpw, 'solver', [solver,'|',PHI_OR_KVL], 'cL', cL, 'caseid', caseid);
 %[eXp, pcut, ixs, ~, num_viols, viols, tot_outl_gen] = ici_info( g, cutind );
 end

@@ -1,7 +1,7 @@
-from gurobipy   import GRB, quicksum
+from gurobipy   import GRB, quicksum, tupledict
 from bnc_xbase  import Bnc_Xbase
 from top_callbk import dfjcut_callback
-from utils import make_mheur, check_KVL, mst_cb, cycle_ordering, order_checking, xtrct_filam, write_sol
+from utils import check_KVL, mst_cb, cycle_ordering, order_checking, xtrct_filam, write_sol
 import pickle
 import math
 import os 
@@ -9,11 +9,10 @@ import os
 class Pnm_Cflow(Bnc_Xbase):
     # Implements the model based on artificial commodity flows.
     
-    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False, MIPHEUR=None, CONNTYP='flow'):
+    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False, CONNTYP='flow'):
         
         mipstart = MIPSTART
-        mipheurt = MIPHEUR
-        Bnc_Xbase.__init__(self, args, RESLIM, OPTCR, DIGRAPH=True, MIPSTART=mipstart, MIPHEUR=mipheurt)                
+        Bnc_Xbase.__init__(self, args, RESLIM, OPTCR, MIPSTART=mipstart)                
         
         # Create the graph partitioning model (initial solve)
         mod_gp = self.model
@@ -31,15 +30,12 @@ class Pnm_Cflow(Bnc_Xbase):
             y_ini = args['y_ini']
             y_ini = dict(((mod_gp._n2i[i],mod_gp._n2i[j]), int(w)) for i,j,w in y_ini)            
             mod_gp.NumStart = 2; mod_gp.Params.StartNumber = 0;
-            for i,j in y_ini:
-                mod_gp._y[i,j].start = y_ini[(i,j)]         
-                
+            for i,j in y_ini: 
+                mod_gp._y[i,j].start = y_ini[(i,j)] 
 #---------------------Cycles (to check KVL at least)---------------------------
-        grf_sp = mod_gp._ntwrk.copy()
+        grf_sp = mod_gp._grfsp
         assert(not grf_sp.is_directed())
-        esIDs = grf_sp.spanning_tree(return_tree=False, weights=None)
-        mstcb = mst_cb(grf_sp, esIDs)
-        mstcb = [tuple([(i,j) if (i,j) in self.uarcs else (j,i) for i,j in cyc]) for cyc in mstcb]        
+        mstcb = self.mstcb
         cyc_pth = os.path.join(os.path.dirname(os.path.dirname( __file__ )), "cycledata", 'cyc_'+self.icase+'.pickle')
         fle_cyc = open(cyc_pth,'rb')        
         cyc = pickle.load(fle_cyc)         # cyc is already converted to igraph node indices
@@ -59,18 +55,21 @@ class Pnm_Cflow(Bnc_Xbase):
         if CONNTYP=='flow':
             # Connectivity constraints through artificial commodity flows
             mod_gp._T = mod_gp.addVars(list(self.uarcs), name="T", vtype=GRB.CONTINUOUS, lb=-(num_vx-1), ub=(num_vx-1))
+            mod_gp._NFanCo = tupledict()
             for r in mod_gp._islsw:
                 Nr = set(mod_gp._graph.neighbors(r))
                 k = trm2k[r]
-                mod_gp.addConstr(quicksum(mod_gp._T[r,j] for j in Nr if (r,j) in self.uarcs)-quicksum(mod_gp._T[j,r] for j in Nr if (j,r) in self.uarcs) == quicksum(mod_gp._x[i,k] for i in self.nodes)-1, "NFanCo1[%s]" % (r))
+                mod_gp._NFanCo[r] = mod_gp.addConstr(quicksum(mod_gp._T[r,j] for j in Nr if (r,j) in self.uarcs)-quicksum(mod_gp._T[j,r] for j in Nr if (j,r) in self.uarcs) == quicksum(mod_gp._x[i,k] for i in self.nodes)-1, "NFanCo1[%s]"%(r))
             nonsw = set(self.nodes) - set(mod_gp._islsw)
             for i in nonsw:        
                 Ni = set(mod_gp._graph.neighbors(i))
-                mod_gp.addConstr(quicksum(mod_gp._T[i,j] for j in Ni if (i,j) in self.uarcs)-quicksum(mod_gp._T[j,i] for j in Ni if (j,i) in self.uarcs) == -1, "NFanCo2[%s]" % (i))
+                mod_gp._NFanCo[i] = mod_gp.addConstr(quicksum(mod_gp._T[i,j] for j in Ni if (i,j) in self.uarcs)-quicksum(mod_gp._T[j,i] for j in Ni if (j,i) in self.uarcs) == -1, "NFanCo2[%s]" % (i))
             # Switching & Commodity flow limitation
+            mod_gp._NFanHI = tupledict()
+            mod_gp._NFanLO = tupledict()
             for i,j in self.uarcs:
-                mod_gp.addConstr(mod_gp._T[i,j]<= (num_vx-1)*(1-mod_gp._y[i,j]), "NFanCo3[%s,%s]" % (i,j))
-                mod_gp.addConstr(mod_gp._T[i,j]>=-(num_vx-1)*(1-mod_gp._y[i,j]), "NFanCo4[%s,%s]" % (i,j))        
+                mod_gp._NFanHI[i,j] = mod_gp.addConstr(mod_gp._T[i,j]<= (num_vx-1)*(1-mod_gp._y[i,j]), "NFanCo3[%s,%s]" % (i,j))
+                mod_gp._NFanLO[i,j] = mod_gp.addConstr(mod_gp._T[i,j]>=-(num_vx-1)*(1-mod_gp._y[i,j]), "NFanCo4[%s,%s]" % (i,j))        
         else:
             mod_gp._ztruu = True         # callback flags
             # Connectivity constraints through spanning forests
@@ -132,7 +131,7 @@ class Pnm_Cflow(Bnc_Xbase):
             # Definition of SOS1 variables
             for i,j in self.uarcs:
                 mod_gp.addSOS(GRB.SOS_TYPE1, [mod_gp._z[i,j],mod_gp._z[j,i]])                
-#-------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         
         # Switching constraints
         for i,j in self.uarcs:
@@ -146,37 +145,37 @@ class Pnm_Cflow(Bnc_Xbase):
             if (i,j) in self.brlim and self.brlim[(i,j)]>0:
                 mod_gp.addConstr(mod_gp._p[i,j]<= self.brlim[(i,j)]*(1-mod_gp._y[i,j]), "LinLimU[%s,%s]" % (i,j))
                 mod_gp.addConstr(mod_gp._p[i,j]>=-self.brlim[(i,j)]*(1-mod_gp._y[i,j]), "LinLimL[%s,%s]" % (i,j))        
-        # Power flows & Phase differences               
+        # Power flows & Phase differences
+        mod_gp._AngLimU = tupledict()
+        mod_gp._AngLimL = tupledict()
         for i,j in self.uarcs:
-            mod_gp.addConstr(mod_gp._p[i,j]-self.bdcpf[(i,j)]*(mod_gp._ph[i]-mod_gp._ph[j])<= 2*math.pi*self.bdcpf[(i,j)]*mod_gp._y[i,j], "AngLimU[%s,%s]" % (i,j))                
-            mod_gp.addConstr(mod_gp._p[i,j]-self.bdcpf[(i,j)]*(mod_gp._ph[i]-mod_gp._ph[j])>=-2*math.pi*self.bdcpf[(i,j)]*mod_gp._y[i,j], "AngLimL[%s,%s]" % (i,j))
-       
-        # Master objective
-        if self.mu<1e-6: self.mu = 0;
+            mod_gp._AngLimU[i,j] = mod_gp.addConstr(mod_gp._p[i,j]-self.bdcpf[(i,j)]*(mod_gp._ph[i]-mod_gp._ph[j])<= 2*math.pi*self.bdcpf[(i,j)]*mod_gp._y[i,j], "AngLimU[%s,%s]" % (i,j))                
+            mod_gp._AngLimL[i,j] = mod_gp.addConstr(mod_gp._p[i,j]-self.bdcpf[(i,j)]*(mod_gp._ph[i]-mod_gp._ph[j])>=-2*math.pi*self.bdcpf[(i,j)]*mod_gp._y[i,j], "AngLimL[%s,%s]" % (i,j))
+        
+        # Objective
+        alpha = 0.00
+        betta = 1.00
+        gamma = 0.01
+        muuuu = self.mu
         mod_gp.setObjective(
-    		  1.00*quicksum(mod_gp._IMBLOD[k] for k in self.islid)\
-          + 0.33*quicksum(mod_gp._pLS[l] for l in self.loads) \
-          + 0.10*quicksum(mod_gp._pGS[g] for g in self.genss) \
-          + self.mu*quicksum(self.flow0[(i,j)]*mod_gp._y[i,j] for i,j in self.uarcs), GRB.MINIMIZE)
+          + alpha*quicksum(mod_gp._IMBLOD[k] for k in self.islid)\
+          + betta*quicksum(mod_gp._pLS[l] for l in self.loads) \
+          + gamma*quicksum(mod_gp._pGS[g] for g in self.genss) \
+          + muuuu*quicksum(self.flow0[(i,j)]*mod_gp._y[i,j] for i,j in self.uarcs), GRB.MINIMIZE)
         self.model = mod_gp
         self.cntyp = CONNTYP
+        mod_gp._nonsw = nonsw
+        mod_gp._Tfeas = -1     # time to feasibility
     
     def solve(self):
-        ##self.model.Params.MIPFocus = 1              
-        self.model.update()
-        if self.model._MipHeur['enabled']:
-            self.model = make_mheur(self.model)
-            self.model._mheur._ztruu = True
-            self.model._mheur._kvlfl = False        
+        self.model.update()      
         if self.cntyp=='flow':
-            self = Bnc_Xbase.solve(self, dfjcut_callback)
+            self = Bnc_Xbase.solve(self, dfjcut_callback)  # callback is for MIP heuristics, recording Tfeas, changing solution strategy...
         elif self.cntyp=='tree':
             self = Bnc_Xbase.solve(self, dfjcut_callback)
         else:
-            raise RuntimeError
-        self.totPLS = 0
-        for i in self.loads:
-            self.totPLS += self.model._pLS[i].x  
+            raise RuntimeError        
+        self.totPLS = sum([self.model._pLS[i].x  for i in self.loads])
         print("TOTAL LOAD SHEDDING IS: " + str(self.totPLS))
         self.totPGS = 0
         for i in self.genss:
@@ -198,13 +197,13 @@ class Pnm_Cflow(Bnc_Xbase):
         for i,j in self.uarcs:
             y_ij = self.model._y[i,j].x
             p_ij = self.model._p[i,j].x
-            y_sol[(i,j)] = y_ij;
-            p_sol[(i,j)] = p_ij;
+            y_sol[(i,j)] = y_ij
+            p_sol[(i,j)] = p_ij
             self.totCUT += self.flow0[(i,j)]*round(y_ij)
         print("TOTAL POWER FLOW CUT IS: " + str(self.totCUT))
 
         # Check cycles KVL
-        grf_sp = self.model._ntwrk.copy()     # assign sign to each cycle edge
+        grf_sp = self.model._grfsp
         assert(not grf_sp.is_directed())
         e2i = self.model._e2i
         nc = len(self.islid)
@@ -213,7 +212,7 @@ class Pnm_Cflow(Bnc_Xbase):
         esIDs = grf_sp.spanning_tree(return_tree=False, weights=None)
         mstcb = mst_cb(grf_sp, esIDs)
         mstcb = [tuple([(i,j) if (i,j) in self.uarcs else (j,i) for i,j in cyc]) for cyc in mstcb]        
-        assert(len(mstcb)==len(grf_sp.es)-len(grf_sp.vs)+nc)  
+        assert(len(mstcb)==len(grf_sp.es)-len(grf_sp.vs)+nc)
         cycls = set(mstcb).union(self.cyc).union(self.srt)
         valid_cycls = set()
         for cyc in cycls:
@@ -229,7 +228,8 @@ class Pnm_Cflow(Bnc_Xbase):
             
         print("TOTAL RUNTIME IS: " + str(self.model.Runtime))
         if hasattr(self.model,'_Theur'):
-            print("TOTAL TIME SPENT IN HEURISTIC IS: " + str(self.model._Theur))
+            T_heur = self.model._MipHeur['Theur'] - self.model._Theur
+            print("TOTAL TIME SPENT IN HEURISTIC IS: " + str(T_heur))
         else:
             print("TOTAL TIME SPENT IN HEURISTIC IS: -1")
         # Extract the solution     
@@ -255,6 +255,10 @@ class Pnm_Cflow(Bnc_Xbase):
             f.write(str(self.totPLS))
         with open(os.path.join(ici_pth, "totPGS.csv"), "w", newline='') as f:
             f.write(str(self.totPGS))
+        with open(os.path.join(ici_pth, "totCUT.csv"), "w", newline='') as f:
+            f.write(str(self.totCUT))
+        with open(os.path.join(ici_pth, "feastime.csv"), "w", newline='') as f:
+            f.write(str(self.model._Tfeas))            
         return self
 
 

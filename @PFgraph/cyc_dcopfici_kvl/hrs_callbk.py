@@ -1,17 +1,17 @@
 """
-This file contains second-level callback functions to be called from within 
-of first-level callback functions (those strictly requiring the model and where 
-args).  
+This file contains second-level callback functions to be called from 
+within the other callback functions (e.g., for the optimization of 
+auxiliary MIP models used in MIP heuristics).  
 """
 
 from gurobipy import GRB
 from cut_callbk import zijcut
 from cut_callbk import kvlcut
-import os                    #dbg
-import sys                   #dbg
+import os                    #for dbg
+import sys                   #for dbg
 rootpth = os.path.abspath(os.path.join(os.path.dirname( __file__ ), '..\\..\\'))
-sys.path.append(rootpth)     #dbg
-import igraphmod             #dbg
+sys.path.append(rootpth)     #for dbg
+import igraphmod             #for dbg
 
 #@profile
 def dfjhrs_callback(model, where):
@@ -29,18 +29,18 @@ def dfjhrs_callback(model, where):
         ##igraphmod.igraph2graphviz(g_yyy,'pyconncmp-dfj')
         ccs = g_yyy.clusters(mode="weak")
         islsw = model._islsw
-        n_grp = len(islsw)
-        
-        if len(ccs)==n_grp and fl_kvl:
-            kvlcut(model,a_del)
-            return
-        elif len(ccs)<n_grp:
+        n_grp = len(islsw)        
+        if len(ccs)<n_grp:
             raise RuntimeError('Infeasible incumbent with too few connected components')
-        
+        if len(ccs)==n_grp:
+            if fl_kvl:
+                kvlcut(model,a_del)                
+                return
+            else:
+                return                
+
         if not fl_zij:
-            return
+            raise RuntimeError('Without z_ij variables (DFJ constraints), incumbent should not have too many connected components...')
         else:
-            zijcut(model, y_val, ccs, a_del)
-
-
-
+            z_val = model.cbGetSolution(model._z)
+            zijcut(model, z_val, ccs, a_del)

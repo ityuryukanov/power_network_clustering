@@ -1,8 +1,8 @@
 import os
 import re
 import warnings  
+import igraph
 from timeit import default_timer as timer
-from gurobipy import GRB, quicksum, tupledict
 from collections import Counter
 
 def order_checking(cyc_ord):    
@@ -14,13 +14,13 @@ def order_checking(cyc_ord):
             arc = (cyc_ord[idx][1],cyc_ord[idx][0])  
         arc_ord.append(arc)   
     assert(all([arc_ord[idx][1]==arc_ord[idx+1][0] for idx in range(len(arc_ord)-1)]))
-    assert(arc_ord[0][0]==arc_ord[-1][1])    
+    assert(arc_ord[0][0]==arc_ord[-1][1])
     return arc_ord
 
 def mst_cb(netw, esIDs):
     graph = netw.copy()
     ##for esID in esIDs:
-    ##    print((graph.es[esID].source+1,graph.es[esID].target+1))        
+    ##    print((graph.es[esID].source+1,graph.es[esID].target+1))
     esALL = [a.index for a in graph.es]
     esCYC = set(esALL) - set(esIDs)
     cycles = list()
@@ -128,6 +128,111 @@ def cycle_signing(cyc0):
         assert(set((arc_ord[0][0],arc_ord[-1][1]))==set(chord))
     return cyc_sgn
 
+def opf_lbl2idx_grf(obj, arcs, uarcs):
+    """
+    Implements a common segment in cycopf.py and bnc_dcopf.py that is 
+    meant to create the auxiliary directed and undirected graphs (using
+    Python igraph), to create mappings between these graphs and decision
+    variables in the model, and transform text label based variable 
+    indices to integer based variable indices.
+    """
+    # Create igraph to obtain a numeric label for each node
+    net = igraph.Graph(directed=True)    # for DFJ cut callbacks       
+    grf = igraph.Graph(directed=False)   # for quick connectivity checks ONLY                 
+    for n in obj.nodes:
+        net.add_vertex(n)
+        grf.add_vertex(n)
+    i2n = dict(); n2i = dict();
+    for vx in net.vs: 
+        i2n[vx.index]=vx['name']
+        n2i[vx['name']]=vx.index
+    for nd in grf.vs: 
+        assert(n2i[nd['name']]==nd.index)
+        assert(i2n[nd.index]==nd['name'])
+    net.add_edges(list(arcs))           
+    grf.add_edges(list(uarcs))      
+    ccs = net.clusters().sizes()     
+    if len(ccs)>1 or ccs[0]<len(obj.nodes):
+        raise RuntimeError('The input graph is disconnected')        
+    i2a = dict(); a2i = dict();
+    for arc in arcs:
+        es = net.es.find(_source=n2i[arc[0]],_target=n2i[arc[1]])
+        es['weight'] = 1     # to speedup callbacks (graph is connected)
+        assert(es.tuple==(n2i[arc[0]],n2i[arc[1]]))
+        i2a[es.index] = (n2i[arc[0]],n2i[arc[1]])
+        a2i[(n2i[arc[0]],n2i[arc[1]])] = es.index        
+    uarcs = [(i2n[es.source],i2n[es.target]) for es in grf.es]  # possibly redefine uarcs to be conform with grf for convenience later
+    e2i = dict(); i2e = dict();  #for grf
+    for uarc in uarcs:
+        es = grf.es.find(_source=n2i[uarc[0]],_target=n2i[uarc[1]])
+        assert(len(es)==1)   # grf is undirected so find() works in both directions
+        es['weight'] = 1     # to speedup callbacks (graph is connected)
+        e2i[(n2i[uarc[0]],n2i[uarc[1]])] = es.index
+        i2e[es.index] = (n2i[uarc[0]],n2i[uarc[1]])
+    # # FOR VIZ ONLY!
+    # grf.es['label'] = [None  for w in grf.es['weight']]
+    # igraphmod.igraph2graphviz(grf,'grfviz')
+    
+    # Convert all data from labels to indices        
+    obj.nodes = [n2i[i] for i in obj.nodes]      # convert all sets of nodes from labels to indices
+    obj.genss = [n2i[i] for i in obj.genss]
+    obj.loads = [n2i[i] for i in obj.loads]  		
+    uarcs = [(n2i[i],n2i[j]) for i,j in uarcs]   # convert uarcs and all branch data from labels to indices		
+    brLup = dict()
+    brLlo = dict()
+    for i,j,w in obj.brlim:
+        if (n2i[i],n2i[j]) in uarcs:
+            brLup[(n2i[i],n2i[j])] = +abs(float(w))   # line limits are symmetric and positive
+            brLlo[(n2i[i],n2i[j])] = -abs(float(w)) 
+        else:
+            brLup[(n2i[j],n2i[i])] = +abs(float(w))   # line limits are symmetric and positive
+            brLlo[(n2i[j],n2i[i])] = -abs(float(w))
+    bdcpf = dict()
+    for i,j,w in obj.bdcpf:
+        if (n2i[i],n2i[j]) in uarcs:
+            bdcpf[(n2i[i],n2i[j])] = float(w)
+        elif (n2i[j],n2i[i]) in uarcs:
+            bdcpf[(n2i[j],n2i[i])] = float(w)
+        else:
+            raise RuntimeError('Edge does not exist!')                 
+    obj.bdcpf = bdcpf;
+    brlim = dict()            
+    for i,j,w in obj.brlim:
+        if (n2i[i],n2i[j]) in uarcs:
+            brlim[(n2i[i],n2i[j])] = abs(float(w))
+        elif (n2i[j],n2i[i]) in uarcs:
+            brlim[(n2i[j],n2i[i])] = abs(float(w))
+        else:
+            raise RuntimeError('Edge does not exist!')
+    obj.brlim = brlim;
+    flow0 = dict() 
+    for i,j,w in obj.flow0:
+        if (n2i[i],n2i[j]) in uarcs:
+            flow0[(n2i[i],n2i[j])] = float(w)
+        elif (n2i[j],n2i[i]) in uarcs:
+            flow0[(n2i[j],n2i[i])] = float(w)
+        else:
+            raise RuntimeError('Edge does not exist!')                
+    obj.flow0 = flow0;
+    obj.pL0   = dict((n2i[n],float(w)) for (n,w) in obj.pL0.items())       # convert all nodal data from labels to indices
+    obj.pG0   = dict((n2i[n],float(w)) for (n,w) in obj.pG0.items())
+    obj.pGmin = dict((n2i[n],float(w)) for (n,w) in obj.pGmin.items())   
+    obj.pGmax = dict((n2i[n],float(w)) for (n,w) in obj.pGmax.items())
+    obj.pLmin = dict((n2i[n],float(w)) for (n,w) in obj.pLmin.items())
+    obj.pLmax = dict((n2i[n],float(w)) for (n,w) in obj.pLmax.items())
+    obj.costL = dict((n2i[n],float(w)) for (n,w) in obj.costL.items())
+        
+    # Define Hi and Lo bounds for generator shedding and load values obj.pL0[i] and
+    # obj.pG0[i] as values for maximum load and maximum generator shedding are included 
+    # to make some study cases feasible. They can be removed if needed.
+    assert all([obj.pL0[i]>=0 for i in obj.loads])   # no negative loads, which are, in fact, generators
+    lo_GS = dict((i, min([0.000000000,obj.pG0[i]-obj.pGmax[i],obj.pG0[i]-obj.pGmin[i]])) for i in obj.genss)
+    up_GS = dict((i, max([obj.pG0[i],obj.pG0[i]-obj.pGmax[i],obj.pG0[i]-obj.pGmin[i]])) for i in obj.genss)
+    lo_LS = dict((i, min([0.000000000,obj.pL0[i]-obj.pLmax[i],obj.pL0[i]-obj.pLmin[i]])) for i in obj.loads)
+    up_LS = dict((i, max([obj.pL0[i],obj.pL0[i]-obj.pLmax[i],obj.pL0[i]-obj.pLmin[i]])) for i in obj.loads)    
+    return (obj,net,grf,i2n,n2i,i2a,a2i,e2i,i2e,arcs,uarcs,lo_LS,up_LS,lo_GS,up_GS,brLlo,brLup)
+
+
 def write_sol(model, varname, isnodid, folder):
     var = getattr(model,'_'+varname)                 
     keys = var.keys()
@@ -154,218 +259,7 @@ def write_sol(model, varname, isnodid, folder):
                 ln = ln+str(var[key].x)
             else:
                 ln = ln+str(var[key])
-            f.write(ln+'\n')
-
-def sol2stage(self,callbackfcn):
-    self.model.Params.MIPFocus = 1
-    self.model.Params.LazyConstraints = 1
-    # DEVIATING FROM DEFALT SETTINGS IS NOT WORTH IT!
-    #self.model.Params.FlowCoverCuts = 2
-    #self.model.Params.FlowPathCuts = 2
-    #self.model.Params.NetworkCuts = 2
-    #for i in self.nodes:
-    #    for k in self.islid:
-    #        self.model._x[i,k].BranchPriority = 1
-    # for i,j in self.uarcs:
-    #     self.model._y[i,j].VarHintVal = 0
-    # DEVIATING FROM DEFALT SETTINGS IS NOT WORTH IT!
-                 
-    # Try to obtain an initial feasible solution satisfying the KVL 
-    self.model.update()
-    MIPGap0 = self.model.Params.MIPGap
-    TimeLim = self.model.Params.TimeLimit
-    self.model.Params.MIPGap = 0.999999999999   # accept first feasible solution
-    start = timer()
-    while True:
-        if self.model._rtd is not None: 
-            self.model.optimize(callbackfcn)
-        else:
-            self.model.optimize()
-        if self.model.status==GRB.Status.INF_OR_UNBD or self.model.status==GRB.Status.INFEASIBLE or self.model.status==GRB.Status.UNBOUNDED: 
-            self.model.computeIIS()
-            self.model.write("IIS_GP.ilp")
-            return None
-        y_sol = dict()
-        p_sol = dict()
-        for i,j in self.uarcs:
-            y_ij = self.model._y[i,j].x
-            p_ij = self.model._p[i,j].x
-            y_sol[(i,j)] = y_ij;
-            p_sol[(i,j)] = p_ij;
-        # Check cycles KVL
-        grf_sp = self.model._ntwrk.copy()  # assign sign to each cycle edge
-        e2i    = self.model._e2i
-        nc     = len(self.islid)
-        a_del  = [e2i[ij] for ij,w in y_sol.items() if abs(w)>0.98]
-        grf_sp.delete_edges(a_del)
-        esIDs  = grf_sp.spanning_tree(return_tree=False, weights=None)
-        mstcb  = mst_cb(grf_sp, esIDs)
-        assert(len(mstcb)==len(grf_sp.es)-len(grf_sp.vs)+nc)
-        cycfail = check_KVL(mstcb,p_sol,self.bdcpf)[0]
-        if len(cycfail)>0:
-            for cyc in cycfail:
-                th_ij = list()
-                for i,j,pm in cyc:
-                    th_ij.append(abs(self.brlim[(i,j)])/abs(self.bdcpf[(i,j)]))   # abs()/abs() is the "worst case"
-                th_ij.sort(reverse=True)
-                th_ij.pop(); th_ij.pop()
-                M_cyc = sum(th_ij)
-                self.model.addConstr(quicksum(self.model._p[i,j]/self.bdcpf[(i,j)]*pm for i,j,pm in cyc)<=+0.5*M_cyc*quicksum(self.model._y[i,j] for i,j,pm in cyc))
-                self.model.addConstr(quicksum(self.model._p[i,j]/self.bdcpf[(i,j)]*pm for i,j,pm in cyc)>=-0.5*M_cyc*quicksum(self.model._y[i,j] for i,j,pm in cyc))
-            theur = timer() - start
-        else:
-            theur = timer() - start
-            break
-        if theur>TimeLim:
-            return None
-    self.model.Params.TimeLimit = TimeLim - theur
-    self.model.Params.StartNumber = 1
-    for i,k in self.model._x:
-        self.model._x[i,k].start = self.model._x[(i,k)].x
-    for i,j in self.model._z:
-        self.model._z[i,j].start = self.model._z[(i,j)].x
-    for i,j in self.model._y:
-        self.model._y[i,j].start = self.model._y[(i,j)].x
-    self.model.Params.MIPGap = MIPGap0
-    return self         
-
-
-def make_mheur(model):
-    # Create MIP model for heuristics
-    MIPHEUR = model._MipHeur
-    if MIPHEUR is not None and MIPHEUR['enabled']:
-        model.update()
-        m_heur      = model.copy()
-        # # Remove extra cycle constraints (more useful for m_heur than for main)
-        # # (DON'T REMOVE, SHORT DFJ CYCLES ARE OK!)
-        # cnstrs = model.getConstrs()
-        # for cnstr in cnstrs:
-        #     if 'CBC_MCB_FWD[' in cnstr.ConstrName:
-        #         model.remove(cnstr)
-        #     if 'CBC_MCB_BCK[' in cnstr.ConstrName:
-        #         model.remove(cnstr)
-        #     if 'CBC_CYC_FWD[' in cnstr.ConstrName:
-        #         model.remove(cnstr)
-        #     if 'CBC_CYC_BCK[' in cnstr.ConstrName:
-        #         model.remove(cnstr)
-        # model.update()        
-        # --------------------------------------------------------
-        m_heur._graph  = model._graph.copy() 
-        m_heur._ntwrk  = model._ntwrk.copy()         
-        if model._rtd is not None:                                
-            m_heur._rtd = model._rtd.copy()
-        else:
-            m_heur._rtd = None
-        m_heur._i2n    = model._i2n.copy()
-        m_heur._n2i    = model._n2i.copy()        
-        m_heur._i2a    = model._i2a.copy()
-        m_heur._a2i    = model._a2i.copy()
-        m_heur._i2e    = model._i2e.copy()
-        m_heur._e2i    = model._e2i.copy()
-        m_heur._trm2k  = model._trm2k.copy()
-        m_heur._k2trm  = model._k2trm.copy() 
-        m_heur._altrm  = model._altrm.copy()
-        m_heur._troot  = model._troot
-        m_heur._ttree  = model._ttree
-        m_heur._relobj = model._relobj
-        m_heur._heurst = False
-        m_heur._Theur  = -1              
-        m_heur._islsw  = model._islsw.copy() 
-        m_heur.Params.PreCrush = model.Params.PreCrush
-        m_heur.Params.LazyConstraints = model.Params.LazyConstraints
-        #---------------------------------------------------------
-        varbls         = m_heur.getVars()
-        m_heur._x      = tupledict()
-        m_heur._y      = tupledict()
-        m_heur._z      = tupledict()
-        m_heur._p      = tupledict()         
-        m_heur._T      = tupledict()
-        m_heur._pGS    = tupledict()
-        m_heur._pLS    = tupledict()
-        m_heur._PwB    = tupledict()
-        m_heur._IMBLOD = tupledict()
-        for var in varbls:
-            if 'x[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = tuple([int(i) for i in idx])
-                m_heur._x[idx] = var
-            elif 'y[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = tuple([int(i) for i in idx])
-                m_heur._y[idx] = var
-            elif 'z[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = tuple([int(i) for i in idx])
-                m_heur._z[idx] = var
-            elif 'pGS[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = int(idx[0])
-                m_heur._pGS[idx] = var
-            elif 'IMBLOD[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = int(idx[0])
-                m_heur._IMBLOD[idx] = var                    
-            elif 'pLS[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = int(idx[0])
-                m_heur._pLS[idx] = var
-            elif 'p[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = tuple([int(i) for i in idx])
-                m_heur._p[idx] = var                            
-            elif 'T[' in var.VarName:
-                idx = re.findall(r'\d+', var.VarName)
-                idx = tuple([int(i) for i in idx])
-                m_heur._T[idx] = var                     
-        #     elif 'z[' in var.VarName:
-        #         m_heur.remove(var)            
-        # cnstrs = m_heur.getConstrs()
-        # for cnstr in cnstrs:
-        #     if 'sptree' in cnstr.ConstrName:
-        #         m_heur.remove(cnstr)
-        #     if 'rootOUT' in cnstr.ConstrName:
-        #         m_heur.remove(cnstr)   
-        #     if 'nodeIN' in cnstr.ConstrName:
-        #         m_heur.remove(cnstr)
-        #     if 'validIJ' in cnstr.ConstrName:
-        #         m_heur.remove(cnstr)        
-        if len(m_heur._T)==0:
-            m_heur._T = None
-        x_lbnd = dict()
-        for i,k in m_heur._x:
-            x_lbnd[i,k] = m_heur._x[i,k].lb
-        x_ubnd = dict()
-        for i,k in m_heur._x:
-            x_ubnd[i,k] = m_heur._x[i,k].ub            
-        y_lbnd = dict()
-        for i,j in m_heur._y:
-            y_lbnd[i,j] = m_heur._y[i,j].lb
-        y_ubnd = dict()
-        for i,j in m_heur._y:
-            y_ubnd[i,j] = m_heur._y[i,j].ub
-        z_lbnd = dict()
-        for i,j in m_heur._z:
-            z_lbnd[i,j] = m_heur._z[i,j].lb
-        z_ubnd = dict()
-        for i,j in m_heur._z:
-            z_ubnd[i,j] = m_heur._z[i,j].ub                      
-        # To reset the original bounds after each run of the heuristic 
-        m_heur._x_lbnd = x_lbnd
-        m_heur._x_ubnd = x_ubnd        
-        m_heur._y_lbnd = y_lbnd
-        m_heur._y_ubnd = y_ubnd
-        m_heur._z_lbnd = z_lbnd
-        m_heur._z_ubnd = z_ubnd          
-        m_heur.Params.LogToConsole = 0       
-        m_heur.Params.TimeLimit = MIPHEUR['T_lim']   # max time per heuristic run
-        model._mheur = m_heur  
-        model._Theur = MIPHEUR['Theur']     # max time available for MIP heuristics
-        model._heurst = MIPHEUR['enabled']
-        model._xlast = None           
-    else:
-        model._heurst = False
-    return model
-
+            f.write(ln+'\n')        
 
 def xtrct_filam(net,root_mlt,root_sgl):
     nods = list()

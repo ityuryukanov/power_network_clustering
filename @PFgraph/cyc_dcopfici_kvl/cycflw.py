@@ -7,11 +7,10 @@ class Cycflw(Ximblnce):
     Here the KVL cycle flow constraints and the spanning tree constraints with 
     directed arc variables z[i,j] are introduced.
     """ 
-    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False, MIPHEUR = None):
+    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False):
         
         mipstart = MIPSTART
-        mip_heur = MIPHEUR
-        Ximblnce.__init__(self, args, RESLIM, OPTCR, MIPSTART=mipstart, MIPHEUR = mip_heur)
+        Ximblnce.__init__(self, args, RESLIM, OPTCR, MIPSTART=mipstart)
         
         # Create the graph partitioning model (initial solve)
         modOPF = self.model
@@ -27,7 +26,7 @@ class Cycflw(Ximblnce):
         modOPF._z = modOPF.addVars(list(self.arcs), name="z", vtype=GRB.BINARY, lb=0, ub=1)
         modOPF._y = modOPF.addVars(list(self.uarcs), name="y", vtype=GRB.BINARY, lb=0, ub=1)
         arccyc = {(i,j) if (i,j) in self.uarcs else (j,i) for cyc in self.mstcb for i,j in cyc}
-        arcarb = set(self.uarcs) - arccyc     
+        arcarb = set(self.uarcs) - arccyc 
         assert(len(arccyc)+len(arcarb)==len(self.uarcs))
         # Set initial values of z[i,j] to z_ini
         if MIPSTART:
@@ -48,7 +47,7 @@ class Cycflw(Ximblnce):
         modOPF.addConstr(quicksum([modOPF._z[i,j] for i,j in self.arcs])==len(self.nodes)-len(self.islid), "sptree")
         # Root nodes have no incoming arcs
         for r in modOPF._islsw:
-            Nr = set(modOPF._graph.neighbors(r))
+            Nr = set(modOPF._graph.neighbors(r))            
             for j in Nr:
                 modOPF._z[j,r].lb = 0   #rootIN[%s]
                 modOPF._z[j,r].ub = 0                   
@@ -80,8 +79,8 @@ class Cycflw(Ximblnce):
         for i,j in arcarb:
             modOPF.addConstr(modOPF._z[i,j]+modOPF._z[j,i] == 1-modOPF._y[i,j], "validIJ[%s,%s]" % (i,j))
 		
-        # Cycle breaking constraints for available cycles (KEEP IT, AS SHORT 
-        # CYCLES HELP THE HEURISTICS AND THE SOLUTION ITSELF)
+        # Cycle breaking constraints for available cycles (KEEP IT, AS SHORT CYCLES 
+        # HELP THE HEURISTICS AND THE SOLUTION ITSELF)
         len_lim = self.cycmax 
         for icyc,cyc in enumerate(self.cyc):
             if len(cyc)<=len_lim:
@@ -105,21 +104,19 @@ class Cycflw(Ximblnce):
         for i,j in self.uarcs:           
             if (i,j) in self.brlim and self.brlim[(i,j)]>0:
                 modOPF.addConstr(modOPF._p[i,j]<= self.brlim[(i,j)]*(1-modOPF._y[i,j]), "LinLim1[%s,%s]" % (i,j))
-                modOPF.addConstr(modOPF._p[i,j]>=-self.brlim[(i,j)]*(1-modOPF._y[i,j]), "LinLim2[%s,%s]" % (i,j))            
+                modOPF.addConstr(modOPF._p[i,j]>=-self.brlim[(i,j)]*(1-modOPF._y[i,j]), "LinLim2[%s,%s]" % (i,j))
 
         # Assign sign to each cycle edge
         mcb_lin = list() 
-        srt    = {tuple(sorted(cyc)) for cyc in self.srt}    #100% avoid repeats!
-        mstmcb = {tuple(sorted(cyc)) for cyc in self.mstcb}
-        cyc_all = mstmcb.union(srt)  # always sync with kvl_all
+        srt     = {tuple(sorted(cyc)) for cyc in self.srt}    #100% avoid repeats!
+        mstmcb  = {tuple(sorted(cyc)) for cyc in self.mstcb}
+        cyc_all = mstmcb.union(srt)    # always sync with kvl_all
         for cyc0 in cyc_all:
             cyc_sgn = cycle_signing(cyc0)
             mcb_lin.append(cyc_sgn)
         
         # Switching constraints for cycles  (cycle length is encoded into the 
-        # name of each constraint)  
-        n_cyc = 0
-        cyclin = set()     
+        # name of each constraint)           
         modOPF._B = self.bdcpf   # for cuts insertion in callbacks
         modOPF._M = self.brlim   # for cuts insertion in callbacks
         for cyc in mcb_lin:
@@ -136,15 +133,15 @@ class Cycflw(Ximblnce):
             modOPF.addConstr(quicksum(modOPF._p[i,j]/self.bdcpf[(i,j)]*pm for i,j,pm in cyc)<=+0.5*M_cyc*quicksum(modOPF._y[i,j] for i,j,pm in cyc), "KVL_Y_UP[%s||%s]" % (len(pthlb),lname))
             modOPF.addConstr(quicksum(modOPF._p[i,j]/self.bdcpf[(i,j)]*pm for i,j,pm in cyc)>=-0.5*M_cyc*quicksum(modOPF._y[i,j] for i,j,pm in cyc), "KVL_Y_LO[%s||%s]" % (len(pthlb),lname))
             continue
-        
+
         # Cycle constraints to ensure that 0 or more than 1 line is switched  
         # for each cycle
-        len_lim = 3  
+        len_lim = 4
         n_yyy = 0
         cyc_all = cyc_all.union(self.cyc)  # always sync with kvl_all
         for cyc0 in cyc_all:
             if len(cyc0)>len_lim:
-                continue;
+                continue
             cyc = set(cyc0)
             cycid = set([i for i,j in cyc] + [j for i,j in cyc])
             cycid = tuple(sorted(cycid))
@@ -157,25 +154,24 @@ class Cycflw(Ximblnce):
 
         # Switching constraints with cycle variables l never work because they 
         # are trivial! They only cause a large slowdown.
-        
-        # Objective: + quicksum(self.costL[l]*modOPF._pLS[l] for l in self.loads) - exclude direct load shedding  
-        if self.mu<1e-6: self.mu = 0;
-        nv = len(self.nodes)
+        alpha = 0.00
+        betta = 1.00
+        gamma = 0.01
+        muuuu = self.mu
         modOPF.setObjective(
-          1.00000*quicksum(modOPF._IMBLOD[k] for k in self.islid)\
-        + 0.33000*quicksum(modOPF._pLS[l] for l in self.loads)    \
-        + 0.10000*quicksum(modOPF._pGS[g] for g in self.genss)    \
-        #+ 0.01/nv*quicksum(modOPF._z[i,j] for i,j in self.arcs)  \
-        + self.mu*quicksum(self.flow0[(i,j)]*modOPF._y[i,j] for i,j in self.uarcs), GRB.MINIMIZE)
+        + alpha*quicksum(modOPF._IMBLOD[k] for k in self.islid)\
+        + betta*quicksum(modOPF._pLS[l] for l in self.loads)    \
+        + gamma*quicksum(modOPF._pGS[g] for g in self.genss)   \
+        + muuuu*quicksum(self.flow0[(i,j)]*modOPF._y[i,j] for i,j in self.uarcs), GRB.MINIMIZE)
             
         # mod_gp based on modOPF for solution restarts
         modOPF.update()
         modOPF._ztruu = True     # callback flags
-        modOPF._kvlfl = True     # callback flags		                        
-        # modOPF._tprs_ins = tp_ins
+        modOPF._kvlfl = True     # callback flags
         modOPF._kvlall = cyc_all
         modOPF._cbkcyc = 0
-        ##modOPF.write("test.lp")
+        modOPF._Tfeas = -1       # time to feasibility
+        ##modOPF.write("test.lp")        
         self.model = modOPF
 
     def solve(self, callbackfcn=None):

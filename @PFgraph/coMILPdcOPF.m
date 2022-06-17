@@ -4,7 +4,7 @@ function [T, sol_stat, res] = coMILPdcOPF(obj, varargin)
 % 
 % Purpose: Implements DC OPF based controlled islanding using the GAMS
 %   interface with MATLAB. It provides data for the GAMS model and fetches 
-%   the results back to MATLAB. Noteworthy, transformers aren't fixed to
+%   the results back to MATLAB. Noteworthy, transformers aren't forced to
 %   stay switched on.
 % 
 % Input: 
@@ -44,8 +44,8 @@ function [T, sol_stat, res] = coMILPdcOPF(obj, varargin)
 % 
 
 % Initialisation
-GRBDIR = 'cyc_dcopfici_kvl';  
-adj = obj.adj;        % abs() (dbg!)
+GRBDIR = 'cyc_dcopfici_kvl'; 
+adj = obj.adj;        % abs()
 assert(issymmetric(adj));
 inc = obj.inc;  
 m = size(adj, 1);     % number of buses
@@ -143,7 +143,7 @@ else
   eXp = ones(2,nc+1);
 end
 if size(eXp,2)==nc && tot_outl_gen==0
-  adj_sep = logical(adj_sep).*adj_mw;   %use power flow weights!
+  adj_sep = logical(adj_sep).*adj_mw;   %use power flow weights
   %edg_dir = sparse(fr_ini, t0_ini, y_ini, m, m);  %trees only spanning terminal nodes
   edg_dir = sparse(fr_ini, t0_ini, 0, m, m);  %trees spanning each node
   for i = 1:1:nc
@@ -197,18 +197,25 @@ addpath(fullfile(fileparts(fileparts(mfilename('fullpath')))),...
   'D:\GAMS\win64\26.1\');
 
 % Remove the old solution (for exit if GAMS doesn't generate a new solution):
-delete('soln.gdx');  %(!)
+delete('soln.gdx'); 
 
-% Extract parameters for the GAMS-model
-obj.coh(1,:) = v(obj.coh(1,:));  % initially coh uses internal graph indexing...
+% Extract parameters for the GAMS model
+obj.coh(1,:) = v(obj.coh(1,:));   % initially coh uses internal graph indexing...
 pow_gen = obj.powgen;
 pow_lod = obj.powlod;
 vw = obj.vw;
-g = v(vw(:,1)~=0 | vw(:,2)~=0);  % buses with generation possible inside of [vw(:,1), vw(:,2)] limits
-l = v(pow_lod(:,1)~=0 | pow_lod(:,2)~=0);  % pow_lod(:,1) is equivalent to vw(:,4) // MATPOWER provides no explicit loads limits
+g = v(vw(:,1)~=0 | vw(:,2)~=0);   % buses with generation possible inside of [vw(:,1), vw(:,2)] limits
+l = v(pow_lod(:,1)~=0 | pow_lod(:,2)~=0);   % pow_lod(:,1) is equivalent to vw(:,4) // MATPOWER provides no explicit loads limits
 [~, ord] = sort(obj.coh(2,ref_idx), 'ascend');
 ref = obj.coh(1,ref_idx);
-ref = ref(ord);  % reference buses for coherent groups in ascending order
+ref = ref(ord);   % reference buses for coherent groups in ascending order
+
+% Visualize the problem using graphviz and python igraph
+%{
+obj_sep = PFgraph('adj',adj_sep,'bus',obj.bus); viz = ones(1,m); viz(ismember(obj.bus,obj.coh(1,obj.coh(2,:)==1))) = 2; viz(ismember(obj.bus,obj.coh(1,obj.coh(2,:)==2))) = 3; viz(ismember(obj.bus,obj.coh(1,obj.coh(2,:)==3))) = 4; 
+part_viz(obj_sep,viz);
+part_viz(obj,viz);
+%}
 
 % Find the distance between group roots and other terminals:
 e2i = NaN(numel(i2e),1);
@@ -404,127 +411,23 @@ if strcmp(solver,'gurobi') && nargout>2
   totIMB = csvread(fullfile(file_dir,GRBDIR,'ici','totIMB.csv'));
   totPGS = csvread(fullfile(file_dir,GRBDIR,'ici','totPGS.csv'));
   totPLS = csvread(fullfile(file_dir,GRBDIR,'ici','totPLS.csv'));
+  totCUT = csvread(fullfile(file_dir,GRBDIR,'ici','totCUT.csv'));
   runTme = csvread(fullfile(file_dir,GRBDIR,'ici','runtime.csv'));
+  t_feas = csvread(fullfile(file_dir,GRBDIR,'ici','feastime.csv'));
   res.UB = UB;
   res.GAP    = GAP;
   res.islIMB = islIMB;
   res.totIMB = totIMB;
   res.totPGS = totPGS;
   res.totPLS = totPLS;
-  res.runTme = runTme;
+  res.totCUT = totCUT;
+  res.runTme = runTme;  
+  res.t_feas = t_feas; 
 end
 
 params.GRBDIR = GRBDIR;
 params.solver = solver;
 params.file_dir = file_dir;
-%%solOK = check_dcopf(obj,mpw,cut1,ref,adj_mx,params);   %if needed, compare Matpower DC OPF with the obtained solution
-end
-
-function solOK = check_dcopf(obj,mpw,cut1,ref,adj_mx,params)
-% If mpw is non-empty, check the islanding solution in terms of constraint satisfaction:
-if isequal(mpw, struct())
-  return;
-end
-GRBDIR   = params.GRBDIR;
-solver   = params.solver;
-file_dir = params.file_dir;
-% Setup the islanding solution in MATPOWER (+ load extra GAMS variables)
-% Disconnect the network and introduce a slack bus for each island
-mpw.branch(:,1:2) = sort(mpw.branch(:,1:2), 2, 'ascend');
-cutlbl1 = obj.bus(cut1(:,1));
-cutlbl2 = obj.bus(cut1(:,2));
-cut_lbl = [cutlbl1(:),cutlbl2(:)];
-branch_off = ismember(mpw.branch(:,1:2), cut_lbl, 'rows');
-mpw.branch(branch_off,:) = [];
-old_slacks = mpw.bus(:,2)==3;
-mpw.bus(old_slacks,2) = 2;
-bus_slacks = ismember(mpw.bus(:,1), ref);
-mpw.bus(bus_slacks,2) = 3;
-% Set up load/generator shedding:
-if strcmp(solver,'gams')
-  fmt.name = 'pLS';
-  fmt.form = 'full';
-  pLS = rgdx(fullfile(file_dir, 'GAMS\soln.gdx'), fmt);
-  vLS = cellfun(@str2num, pLS.uels{1}, 'UniformOutput', true);
-  pLS = pLS.val;
-else
-  pLS = csvread(fullfile(file_dir,GRBDIR,'ici','pLS.csv'));
-  vLS = pLS(:,1);
-  pLS = pLS(:,2);
-end
-if strcmp(solver,'gams')
-  fmt.name = 'pGS';
-  pGS = rgdx(fullfile(file_dir, 'GAMS\soln.gdx'), fmt);
-  vGS = cellfun(@str2num, pGS.uels{1}, 'UniformOutput', true);
-  pGS = pGS.val;
-else
-  pGS = csvread(fullfile(file_dir,GRBDIR,'ici','pGS.csv'));
-  vGS = pGS(:,1);
-  pGS = pGS(:,2);
-end
-vLS = vLS(:); vGS = vGS(:);
-bus_ls = ismember(mpw.bus(:,1), vLS);
-[~,~,ib] = intersect(mpw.bus(bus_ls,1),vLS);
-assert(isequal(mpw.bus(bus_ls,1),vLS(ib)));
-vLS = vLS(ib); pLS = pLS(ib);
-mpw.bus(bus_ls,3) = mpw.bus(bus_ls,3) - pLS*obj.basmva;
-bus_gs = ismember(mpw.bus(:,1), vGS);
-[~,~,ib] = intersect(mpw.bus(bus_gs,1),vGS);
-assert(isequal(mpw.bus(bus_gs,1),vGS(ib)));
-vGS = vGS(ib); pGS = pGS(ib);
-mpw.bus(bus_gs,3) = mpw.bus(bus_gs,3) + pGS*obj.basmva;
-%}
-% All set, run DC PF
-mpOpt = mpoption('out.all', 0, 'verbose', 0, 'out.suppress_detail', 1, 'model', 'DC');
-mpw = rundcpf(mpw, mpOpt);  % an islanded single generator bus (even if it has a load!) may cause failure
-% Load power flows and check if they are same
-if strcmp(solver,'gams')
-  fmt.name = 'T';
-  fmt.form = 'sparse';
-  Tij = rgdx(fullfile(file_dir, 'GAMS\soln.gdx'), fmt);
-  idx1 = Tij.val(:,1);
-  idx2 = Tij.val(:,2);
-  pgms = Tij.val(:,3);
-  fm = cellfun(@str2num, Tij.uels{1}(idx1), 'UniformOutput', true);
-  to = cellfun(@str2num, Tij.uels{2}(idx2), 'UniformOutput', true);
-else
-  Tij = csvread(fullfile(file_dir,GRBDIR,'ici','p.csv'));
-  fm = Tij(:,1);
-  to = Tij(:,2);
-  pgms = Tij(:,3);
-end
-fm = arrayfun(@(x)find(obj.bus==x),fm); fm = fm(:);  % node_lbl 2 node_idx
-to = arrayfun(@(x)find(obj.bus==x),to); to = to(:);
-[edg_op,perm] = sortrows(sort([fm,to], 2, 'ascend'));
-pgms = pgms(perm);
-m = size(mpw.bus,1);
-Tij = sparse(edg_op(:,1),edg_op(:,2),abs(pgms)*obj.basmva,m,m);
-pmpw = mpw.branch(:,14);
-empw = arrayfun(@(x)find(obj.bus==x),mpw.branch(:,1)); edg_mp(:,1) = empw(:);
-empw = arrayfun(@(x)find(obj.bus==x),mpw.branch(:,2)); edg_mp(:,2) = empw(:);
-[edg_mp,perm] = sortrows(sort([edg_mp(:,1),edg_mp(:,2)], 2, 'ascend'));
-pmpw = pmpw(perm);
-Tmp = sparse(edg_mp(:,1),edg_mp(:,2),abs(pmpw),m,m);
-Tmp(abs(Tmp)<1e-4) = 0;
-Tij(abs(Tij)<1e-4) = 0;
-Dij = abs(Tij-Tmp)./min(abs(Tij),abs(Tmp));
-Dij(isnan(Dij)) = 0;
-%assert( max(max(Dij))<0.01 );
-ijall = unique([[edg_op(:,1);edg_mp(:,1)],[edg_op(:,2);edg_mp(:,2)]],'rows');
-egnum = size(ijall,1);
-for i = 1:1:egnum
-  fl1 = abs(Tij(ijall(i,1),ijall(i,2))-Tmp(ijall(i,1),ijall(i,2)));
-  fl2 = abs(Tij(ijall(i,1),ijall(i,2))-Tmp(ijall(i,1),ijall(i,2)))/abs(Tmp(ijall(i,1),ijall(i,2))+eps);
-  fl3 = min(Tij(ijall(i,1),ijall(i,2))/Tmp(ijall(i,1),ijall(i,2)),Tmp(ijall(i,1),ijall(i,2))/Tij(ijall(i,1),ijall(i,2)));
-  if ~(fl2<0.02 || fl3<0.02)
-    continue;
-  end
-  assert( fl2<0.02 || fl3>0.98 );  %fl1<0.02 || isequal([ijall(i,1),ijall(i,2)],[10,18])
-end
-% Check if the line limits are satisfied
-Tij = Tij + Tij';  % triangular to full symmetric
-assert( all(all(abs(Tij) <= abs(adj_mx*obj.basmva))) );
-solOK = true;
 end
 
 function [fr_cnstr, t0_cnstr, p_cnstr, adj_cnstr] = get_edg_attr(p_cnstr, m)

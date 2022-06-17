@@ -6,10 +6,9 @@ from gurobipy import GRB, quicksum, tupledict
 
 class Ximblnce(Cycopf):
     
-    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False, MIPHEUR = None):        
+    def __init__(self, args, RESLIM=None, OPTCR=0, MIPSTART=False):        
         
-        mip_heur = MIPHEUR
-        Cycopf.__init__(self, args, RESLIM, OPTCR, MIPHEUR = mip_heur)                   
+        Cycopf.__init__(self, args, RESLIM, OPTCR)                   
         x_ini = args['x_ini']
         trm2k = args['trm2k']
         islid = self.islid
@@ -33,11 +32,6 @@ class Ximblnce(Cycopf):
             self.model.NumStart = 2; self.model.Params.StartNumber = 0;                     
             for i,k in x_ini:
                 x[i,k].start = x_ini[(i,k)]
-        
-        ### Fixes x[i,k] to x_ini (for debug only)
-        ##for i,k in x_ini:
-        ##    x[i,k].lb = x_ini[(i,k)]
-        ##    x[i,k].ub = x_ini[(i,k)]		
         
         # Form a dictionary from group ids to corresponding terminal nodes
         k2trm = dict()
@@ -79,6 +73,7 @@ class Ximblnce(Cycopf):
         esIDs = grf_sp.spanning_tree(return_tree=False, weights=None)        
         mstcb = mst_cb(grf_sp, esIDs)
         assert(len(mstcb)==len(grf_sp.es)-len(grf_sp.vs)+1)
+        mstcb = [tuple([(i,j) if (i,j) in self.uarcs else (j,i) for i,j in cyc]) for cyc in mstcb] 
         for es in grf_sp.es:
             if es.index in esIDs:
                 es['weight'] = 1e-6;
@@ -92,9 +87,9 @@ class Ximblnce(Cycopf):
             gen_k = k2trm[k]
             pwr_k = [self.pG0[i] for i in gen_k]
             assert(all([pwr>=-1e-12 for pwr in pwr_k]))
-            self.model.addConstr(IMBLOD[k]>= quicksum((self.pL0[i]-self.pG0[i])*x[i,k] for i in self.nodes), "IMBPOS[%s]" % k)
-            self.model.addConstr(IMBLOD[k]>=-quicksum((self.pL0[i]-self.pG0[i])*x[i,k] for i in self.nodes), "IMBNEG[%s]" % k)
-            
+            self.model.addConstr(IMBLOD[k]>= quicksum((self.pL0[i]-self.pG0[i])*x[i,k] for i in self.nodes), "IMBPOS[%s]" % k) 
+            self.model.addConstr(IMBLOD[k]>=-quicksum((self.pL0[i]-self.pG0[i])*x[i,k] for i in self.nodes), "IMBNEG[%s]" % k) 
+        
         self.model.update()      
         self.model._x = x
         self.model._IMBLOD = IMBLOD
@@ -142,8 +137,7 @@ class Ximblnce(Cycopf):
         mod_gp._relobj = modOPF._relobj
         mod_gp._heurst = modOPF._heurst      # OK if auxiliary model copies the original       
         mod_gp._Theur  = modOPF._Theur       # max time available for MIP heuristics
-        mod_gp._MipHeur = modOPF._MipHeur.copy()        
-        mod_gp._xlast  = modOPF._xlast        
+        mod_gp._MipHeur = modOPF._MipHeur.copy()               
         mod_gp._islsw  = modOPF._islsw.copy() 
         mod_gp.Params.PreCrush = modOPF.Params.PreCrush
         mod_gp.Params.LazyConstraints = modOPF.Params.LazyConstraints                   
@@ -196,5 +190,3 @@ class Ximblnce(Cycopf):
         ici_pth = os.path.abspath(os.path.join(os.path.dirname( __file__ ), 'ici'))
         write_sol(self.model, 'x', [True, False], ici_pth)        
         return self 
-
-

@@ -62,4 +62,4 @@ n=0;
 while abs(floor(x*10^n)-x*10^n)>1e-14
   n=n+1;
 end
-end
+end  

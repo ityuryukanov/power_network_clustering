@@ -14,7 +14,7 @@
 % col5 q_gen(pu),
 % col6 p_load(pu)
 % col7 q_load(pu)
-% col8 G shunt(pu)
+% col8 G shunt(pu)  
 % col9 B shunt(pu)
 % col10 bus_type
 %       bus_type - 1, swing bus
